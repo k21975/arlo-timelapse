@@ -1,0 +1,37 @@
+# docker-compose.yml — defines the single long-running container.
+# Start it with:   docker compose up -d
+# (Docker Compose automatically reads the ".env" file in this folder for both the
+#  ${...} values below AND the application's settings via env_file.)
+services:
+  arlo-timelapse:
+    build: .
+    image: arlo-timelapse:latest
+    container_name: arlo-timelapse
+
+    # Restart automatically unless YOU stopped it (survives crashes and reboots).
+    restart: unless-stopped
+
+    # All secrets/settings come from the .env file in this folder.
+    env_file: .env
+
+    # Timezone for logs, scheduling, and sunrise/sunset math.
+    environment:
+      TZ: ${TZ:-America/New_York}
+
+    # ---- LOCAL WEB DASHBOARD ------------------------------------------------
+    # Publishes the built-in dashboard (battery/signal/photos + Pause button).
+    # BOTH sides use WEB_PORT so the host port and the in-container listen port
+    # always match. Set WEB_PORT in .env (NOT in the dashboard UI) if 8080 is
+    # already taken, then restart the container.
+    #   Left of the colon  = the port ON YOUR UNRAID HOST -> open http://<host>:<WEB_PORT>
+    #   Right of the colon = the port INSIDE the container (the app reads WEB_PORT)
+    ports:
+      - "${WEB_PORT:-8080}:${WEB_PORT:-8080}"
+
+    # ---- DATA STORAGE -------------------------------------------------------
+    # Left of the colon  = a path ON YOUR UNRAID SERVER (set DATA_PATH in .env).
+    # Right of the colon = /data INSIDE the container (do NOT change this).
+    # Point DATA_PATH at a dedicated share so you can browse snapshots over SMB
+    # from your Mac, e.g. DATA_PATH=/mnt/user/arlo-timelapse
+    volumes:
+      - ${DATA_PATH:-/mnt/user/appdata/arlo-timelapse}:/data

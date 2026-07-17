@@ -1,0 +1,10 @@
+# Keep the build context small and never bake secrets into the image.
+.env
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+data/
+*.mp4
+README.md
