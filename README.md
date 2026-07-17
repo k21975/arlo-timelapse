@@ -17,9 +17,9 @@ Your images live on your hardware, under your control.
   <img alt="Powered by pyaarlo" src="https://img.shields.io/badge/powered%20by-pyaarlo-ff2e88">
 </p>
 
-> 📷 **Add a screenshot:** drop a picture of your dashboard at `docs/dashboard.png`
-> and it'll show up right here — it's the best advertisement for the project.
-> <!-- ![The dashboard](docs/dashboard.png) -->
+<p align="center">
+  <img alt="The synthwave dashboard: live status, Pause/Resume, battery, signal and photo counts" src="docs/dashboard.png" width="600">
+</p>
 
 ---
 
