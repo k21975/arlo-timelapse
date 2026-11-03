@@ -9,5 +9,5 @@ pyaarlo==0.8.0.21
 
 astral==3.2            # sunrise / sunset calculations
 APScheduler==3.10.4    # the internal scheduler (captures + daily digest)
-Pillow==10.4.0         # used ONLY by compile.py for the optional date/time overlay
-python-dotenv==1.0.1   # lets compile.py / login_once.py read .env when run by hand
+Pillow==13.0.0         # used ONLY by compile.py for the optional date/time overlay
+python-dotenv==1.2.2   # lets compile.py / login_once.py read .env when run by hand

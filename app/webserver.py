@@ -185,7 +185,7 @@ def _favicon_ico() -> bytes | None:
         # Safari's ICO decoder only understands the classic BMP/DIB encoding --
         # given a PNG-in-ICO it silently fails and shows the first letter of the
         # site in the tab instead of the favicon. Forcing BMP fixes Safari.
-        # (bitmap_format was added in Pillow 9.3; we ship 10.4, but fall back to
+        # (bitmap_format was added in Pillow 9.3; we ship 13.0, but fall back to
         # the default save on anything older so the icon never disappears.)
         try:
             img.save(buf, format="ICO",
