@@ -57,7 +57,7 @@ log = logging.getLogger(__name__)
 #     key      - the variable name (also the environment-variable name)
 #     label    - friendly name shown in the UI
 #     group    - which section of the settings form it belongs to
-#     type     - "str" | "int" | "float" | "secret" | "time" | "choice"
+#     type     - "str" | "int" | "float" | "secret" | "time" | "choice" | "days"
 #     default  - value used when neither the file nor the environment sets it
 #     help     - one-line explanation shown under the field
 #     secret   - True for passwords: never sent to the browser; blank = keep
@@ -103,6 +103,10 @@ SETTINGS_SCHEMA = [
              "help": "Optional. Leave BLANK to use sunrise. Set both start & end to use fixed times."},
             {"key": "CAPTURE_END", "label": "Fixed end time (HH:MM)", "type": "time", "default": "",
              "help": "Optional. Leave BLANK to use sunset. Set both start & end to use fixed times."},
+            {"key": "CAPTURE_DAYS", "label": "Capture days", "type": "days", "default": "Mon-Sun",
+             "help": "Days of the week to take photos, e.g. \"Mon-Fri\" (skip weekends), "
+                     "\"Mon-Sat\", or \"Mon,Wed,Fri\". \"Mon-Sun\" = every day. Off days take "
+                     "no photos; the daily email still sends, marked as an off day."},
             {"key": "DAYLIGHT_BUFFER_MIN", "label": "Daylight buffer (minutes)", "type": "int",
              "default": 30, "min": 0, "max": 240,
              "help": "Start this long AFTER sunrise and stop this long BEFORE sunset (ignored if fixed times are set)."},
@@ -259,6 +263,14 @@ def _coerce(field: dict, raw):
             _parse_hhmm(value, field["key"])  # validate "HH:MM"
         return value
 
+    if t == "days":
+        # Store a tidy canonical form ("mon - fri" -> "Mon-Fri") so the UI shows
+        # it consistently and an equivalent re-entry isn't seen as a change.
+        try:
+            return format_days(parse_days(raw))
+        except ValueError as exc:
+            raise ValueError(f"{field['key']}: {exc}")
+
     if t == "int":
         try:
             value = int(str(raw).strip())
@@ -295,6 +307,67 @@ def _parse_hhmm(text: str, key: str = "time") -> tuple[int, int]:
     if not (0 <= h <= 23 and 0 <= m <= 59):
         raise ValueError(f"{key} must be a valid 24-hour time (00:00–23:59)")
     return h, m
+
+
+_DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]  # Python weekday() order
+
+
+def _day_index(token: str) -> int:
+    """'mon' / 'Monday' / 'TUES' -> 0..6 (Mon=0). Raises ValueError if unknown."""
+    tok = token.strip().lower()
+    if len(tok) >= 3:
+        for i, abbr in enumerate(_DAY_ABBR):
+            if tok.startswith(abbr.lower()):
+                return i
+    raise ValueError(f"unknown day \"{token.strip()}\" (use Mon, Tue, Wed, Thu, Fri, Sat, Sun)")
+
+
+def parse_days(text) -> set[int]:
+    """
+    Parse a capture-days setting into a set of weekday numbers (Mon=0 .. Sun=6).
+
+    Accepts ranges and lists, case-insensitive, spaces ignored:
+        "Mon-Fri"   "mon-sat"   "Mon,Wed,Fri"   "Mon-Thu, Sat"   "Fri-Mon" (wraps)
+    Blank / "all" / "every day" / "daily" mean all seven days.
+    Raises ValueError on anything it can't understand.
+    """
+    s = str(text or "").strip().lower()
+    if s in ("", "all", "every day", "everyday", "daily"):
+        return set(range(7))
+    if s == "weekdays":
+        return {0, 1, 2, 3, 4}
+    days: set[int] = set()
+    for part in s.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            i, end = _day_index(a), _day_index(b)
+            days.add(i)
+            while i != end:
+                i = (i + 1) % 7
+                days.add(i)
+        else:
+            days.add(_day_index(part))
+    if not days:
+        raise ValueError("pick at least one day, e.g. Mon-Fri")
+    return days
+
+
+def format_days(days: set[int]) -> str:
+    """{0,1,2,3,4} -> "Mon-Fri";  {0,2,4} -> "Mon,Wed,Fri";  all -> "Mon-Sun"."""
+    parts, ordered, i = [], sorted(days), 0
+    while i < len(ordered):
+        j = i
+        while j + 1 < len(ordered) and ordered[j + 1] == ordered[j] + 1:
+            j += 1
+        if j - i >= 2:  # 3+ consecutive days read best as a range
+            parts.append(f"{_DAY_ABBR[ordered[i]]}-{_DAY_ABBR[ordered[j]]}")
+        else:
+            parts.extend(_DAY_ABBR[k] for k in ordered[i:j + 1])
+        i = j + 1
+    return ",".join(parts)
 
 
 def _load_overrides() -> dict:

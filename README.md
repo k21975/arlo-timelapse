@@ -72,7 +72,7 @@ Your images live on your hardware, under your control.
 ## 1. How it works
 
 Every 15 minutes **during daylight only** (sunrise→sunset for your location, with
-a buffer), the app asks the camera for a fresh snapshot through Arlo's cloud and
+a buffer, and optionally only on chosen days like Mon–Fri), the app asks the camera for a fresh snapshot through Arlo's cloud and
 saves the JPEG to your server. It logs battery/signal on every attempt, emails
 you immediately if something breaks, and sends a daily summary at sunset.
 
@@ -395,6 +395,7 @@ Everything is set in `.env`. **Required** values have no safe default.
 | `DAYLIGHT_BUFFER_MIN` | | `30` | Start this many min after sunrise, stop this many before sunset. |
 | `CAPTURE_START` | | — | Optional fixed start `HH:MM`. Set **both** start+end to ignore the sun. |
 | `CAPTURE_END` | | — | Optional fixed end `HH:MM`. |
+| `CAPTURE_DAYS` | | `Mon-Sun` | Days of the week to capture, e.g. `Mon-Fri` to skip weekends, `Mon-Sat`, or `Mon,Wed,Fri`. |
 | `TZ` | | `America/New_York` | Timezone for scheduling + logs. |
 | `BATTERY_ALERT_PCT` | | `20` | Email when battery drops below this %. |
 | `CONSECUTIVE_FAIL_ALERT` | | `3` | Email after this many failed snapshots in a row. |
@@ -429,6 +430,8 @@ Everything is set in `.env`. **Required** values have no safe default.
 **No snapshots are being saved.**
 - It only captures during daylight (sunrise+buffer → sunset−buffer). Check the
   clock/`TZ` and `DAYLIGHT_BUFFER_MIN`.
+- It only captures on the `CAPTURE_DAYS` (e.g. `Mon-Fri` skips weekends). The
+  dashboard shows "off today 💤" on an excluded day.
 - Watch `docker compose logs -f` for the reason (offline? snapshot timeout?).
 - The Go 2 over LTE can be slow — try raising `SNAPSHOT_TIMEOUT_SEC`.
 

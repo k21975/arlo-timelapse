@@ -519,6 +519,11 @@ def _gather_status() -> dict:
     # --- Daylight window + a rough "next capture" estimate -----------------
     sunrise = sunset = win_start = win_stop = None
     is_day = False
+    capture_today = True
+    try:
+        capture_today = daylight.is_capture_day(today)
+    except Exception:
+        pass
     try:
         sr, ss = daylight.sun_times(today)
         ws, wstop = daylight.daylight_window(today)
@@ -555,6 +560,8 @@ def _gather_status() -> dict:
         "window_stop": win_stop,
         "window_mode": window_mode,
         "is_daylight": is_day,
+        "capture_today": capture_today,
+        "capture_days": config.CAPTURE_DAYS,
     }
 
 
@@ -1068,7 +1075,8 @@ function paint(s) {
     btn.className = 'resume'; btn.textContent = '▶ Resume captures';
   } else {
     banner.className = 'banner running';
-    banner.textContent = s.is_daylight ? '● Running' : '● Running · waiting for window';
+    banner.textContent = s.is_daylight ? '● Running'
+      : (s.capture_today === false ? '● Running · off today' : '● Running · waiting for window');
     btn.className = 'pause'; btn.textContent = '⏸ Pause captures';
   }
   if (!busy) btn.disabled = false;
@@ -1092,7 +1100,9 @@ function paint(s) {
     const mode = s.window_mode === 'fixed' ? 'fixed times' : 'sun ' + s.sunrise + '–' + s.sunset;
     dl = 'Capturing <b>' + esc(s.window_start) + '</b> → <b>' + esc(s.window_stop) + '</b>'
        + ' &nbsp;·&nbsp; ' + mode
-       + ' &nbsp;·&nbsp; ' + (s.is_daylight ? 'open now ☀️' : 'closed 🌙');
+       + (s.capture_days && s.capture_days !== 'Mon-Sun' ? ' &nbsp;·&nbsp; ' + esc(s.capture_days) : '')
+       + ' &nbsp;·&nbsp; ' + (s.is_daylight ? 'open now ☀️'
+                              : (s.capture_today === false ? 'off today 💤' : 'closed 🌙'));
   }
   document.getElementById('daylight').innerHTML = dl;
 

@@ -12,10 +12,18 @@ numbers are approximate. Adjust freely.
 
 from __future__ import annotations
 
-VERSION = "2.23.1"
+VERSION = "2.24.0"
 
 # Newest first. Each entry: version, date (YYYY-MM-DD), and a list of changes.
 CHANGELOG = [
+    {
+        "version": "2.24.0",
+        "date": "2026-11-23",
+        "changes": [
+            "New \"Capture days\" setting (Settings → Capture window): choose which days of the week to take photos, e.g. \"Mon-Fri\" to skip weekends when no work is happening. Defaults to every day, so nothing changes until you set it.",
+            "On an off day the dashboard shows \"off today 💤\", and the daily email still sends (it's the heartbeat) but is tagged [OFF DAY] so a 0-frame day isn't mistaken for a failure.",
+        ],
+    },
     {
         "version": "2.23.1",
         "date": "2026-07-06",

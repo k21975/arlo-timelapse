@@ -168,6 +168,11 @@ def send_daily_digest(stats: dict) -> bool:
     # "0 frames" day is never mistaken for a failure.
     pause_line = "STATUS                : *** PAUSED via dashboard ***\n" if paused else ""
     subject_tag = " [PAUSED]" if paused else ""
+    # Same idea for a day excluded by the "Capture days" setting (e.g. weekends).
+    if stats.get("off_day"):
+        pause_line += (f"STATUS                : Off day -- no captures scheduled "
+                       f"(capture days: {stats.get('capture_days', '?')})\n")
+        subject_tag += " [OFF DAY]"
 
     subject = f"Arlo Timelapse — {date} — {frames} frames, battery {battery}%{subject_tag}"
     body = (

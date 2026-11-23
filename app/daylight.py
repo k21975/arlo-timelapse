@@ -14,6 +14,9 @@ There are TWO ways the window can be defined:
      (CAPTURE_START / CAPTURE_END, like "07:00" and "19:30"), those exact clock
      times are used instead and the sun is ignored.
 
+On top of either, CAPTURE_DAYS (e.g. "Mon-Fri") limits which days of the week
+have a window at all -- so no photos are taken on weekends when nobody works.
+
 Everything here reads `config` LIVE (each call), so changes you make in the web
 dashboard -- location, buffer, fixed times, time zone -- take effect immediately
 without restarting the daemon.
@@ -96,8 +99,24 @@ def daylight_window(date: dt.date | None = None) -> tuple[dt.datetime, dt.dateti
     return sunrise + buffer, sunset - buffer
 
 
+def is_capture_day(date: dt.date | None = None) -> bool:
+    """True if `date` (default: today) is one of the CAPTURE_DAYS (e.g. Mon-Fri).
+
+    A malformed value can only come from a hand-edited file (the UI validates),
+    and it must never silently stop all captures -- so it counts as every day.
+    """
+    if date is None:
+        date = now().date()
+    try:
+        return date.weekday() in config.parse_days(config.CAPTURE_DAYS)
+    except Exception:
+        return True
+
+
 def is_daylight(moment: dt.datetime | None = None) -> bool:
     """True if `moment` (default: now) is inside today's capture window.
+
+    Days excluded by CAPTURE_DAYS (e.g. weekends) have no window at all.
 
     The end check is done at MINUTE granularity: the scheduler fires a capture a
     few hundred microseconds after the top of the minute, so a fixed end time of
@@ -106,6 +125,8 @@ def is_daylight(moment: dt.datetime | None = None) -> bool:
     """
     if moment is None:
         moment = now()
+    if not is_capture_day(moment.date()):
+        return False
     start, stop = daylight_window(moment.date())
     return start <= moment and moment.replace(second=0, microsecond=0) <= stop
 

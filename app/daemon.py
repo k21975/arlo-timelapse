@@ -101,6 +101,9 @@ def _build_digest_stats() -> dict:
         "errors": errors,
         "last_image": last_image,
         "paused": pause.is_paused(),  # so the digest can remind you it's paused
+        # A weekend (or other excluded day) -- so "0 frames" isn't read as a failure.
+        "off_day": not daylight.is_capture_day(today),
+        "capture_days": config.CAPTURE_DAYS,
     }
 
 
@@ -279,7 +282,8 @@ def _schedule_capture_job(scheduler: BlockingScheduler) -> None:
         _run_scheduled_capture, trigger, args=[scheduler], id="capture",
         replace_existing=True, coalesce=True, max_instances=1, misfire_grace_time=120,
     )
-    log.info("Capture job scheduled every %d min (it skips outside daylight).", interval)
+    log.info("Capture job scheduled every %d min on %s (it skips outside daylight).",
+             interval, getattr(config, "CAPTURE_DAYS", "Mon-Sun"))
 
 
 def _schedule_digest_jobs(scheduler: BlockingScheduler) -> None:
