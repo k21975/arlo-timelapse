@@ -231,7 +231,11 @@ theme — neon grid and all.)
 **Pause** stops new snapshots (handy when the battery is low) while keeping the
 camera logged in and the daily heartbeat email running — so a paused day shows
 "0 frames" but is clearly labelled `[PAUSED]` in the email, not a failure.
-Pressing **Resume** starts captures again.
+Tapping **Pause** asks how long: **rest of today** (captures resume by themselves
+tomorrow), **until a date** (a calendar pops up — pick the day captures should start
+again), or **until you press Resume**. Pressing **Resume** starts captures again at
+any time. The **Test capture now** button (force one fresh snapshot) lives at the
+top of the ⚙ Settings panel.
 
 ### Changing settings from the dashboard
 
@@ -283,6 +287,10 @@ ssh unraid "touch /mnt/user/arlo-timelapse/state/paused.flag"   # pause
 ```
 ssh unraid "rm -f /mnt/user/arlo-timelapse/state/paused.flag"   # resume
 ```
+
+A timed pause just adds a second line `resume YYYY-MM-DD` to that file; on that
+date the pause clears itself. A flag file without that line stays paused until
+removed.
 
 ---
 
@@ -385,7 +393,7 @@ Everything is set in `.env`. **Required** values have no safe default.
 | `SMTP_PASSWORD` | ✅ | — | Gmail **App Password** (same 16 chars). |
 | `SMTP_HOST` | | `smtp.gmail.com` | SMTP server. |
 | `SMTP_PORT` | | `465` | `465`=SSL, `587`=STARTTLS. |
-| `ALERT_EMAIL` | ✅ | — | Where alerts + digests are sent (your normal email). |
+| `ALERT_EMAIL` | ✅ | — | Where alerts + digests are sent (your normal email). Several addresses: separate with commas. |
 | `FROM_EMAIL` | | = `SMTP_USERNAME` | "From" address on outgoing mail. |
 | `CAPTURE_INTERVAL_MIN` | | `15` | Minutes between snapshots. |
 | `SNAPSHOT_TIMEOUT_SEC` | | `60` | How long to wait for each snapshot (LTE can be slow). |

@@ -12,10 +12,19 @@ numbers are approximate. Adjust freely.
 
 from __future__ import annotations
 
-VERSION = "2.24.0"
+VERSION = "2.25.0"
 
 # Newest first. Each entry: version, date (YYYY-MM-DD), and a list of changes.
 CHANGELOG = [
+    {
+        "version": "2.25.0",
+        "date": "2026-11-23",
+        "changes": [
+            "Pause now asks how long: \"Rest of today\" (resumes by itself tomorrow), \"Until a date…\" (a calendar pops up to pick the day captures start again), or \"Until I press Resume\" (the old behavior). The banner shows when a timed pause will end.",
+            "Moved the \"Test capture now\" button off the main page into the top of the ⚙ Settings panel.",
+            "\"Send alerts to\" now takes several email addresses separated by commas (or semicolons); each is checked when you save, and alerts + the daily digest go to everyone on the list.",
+        ],
+    },
     {
         "version": "2.24.0",
         "date": "2026-11-23",

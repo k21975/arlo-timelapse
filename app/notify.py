@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import smtplib
 import ssl
 import time
@@ -70,7 +71,13 @@ def send_email(subject: str, body: str, attach: Path | None = None, inline: bool
         msg = EmailMessage()
         msg["Subject"] = subject
         msg["From"] = config.FROM_EMAIL
-        msg["To"] = config.ALERT_EMAIL
+        # ALERT_EMAIL may hold several addresses ("a@x.com, b@y.com"); every one
+        # goes on the To line, and smtplib sends to each address listed there.
+        recipients = [a.strip() for a in re.split(r"[,;]", str(config.ALERT_EMAIL or "")) if a.strip()]
+        if not recipients:
+            log.error("No recipient set (ALERT_EMAIL is empty); cannot send %r.", subject)
+            return False
+        msg["To"] = ", ".join(recipients)
 
         # Try to read the image, if one was requested.
         image_bytes = None

@@ -19,13 +19,15 @@ Routes:
   GET  /              -> the HTML dashboard page
   GET  /api/status    -> JSON with all the numbers (the page polls this)
   GET  /latest.jpg    -> the most recent snapshot image
-  POST /api/pause     -> pause captures (create the flag file)
+  POST /api/pause     -> pause captures (create the flag file). Optional JSON body
+                         {"resume_on": "YYYY-MM-DD" | "tomorrow"} for a timed pause.
   POST /api/resume    -> resume captures (delete the flag file)
 """
 
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import html
 import json
 import logging
@@ -542,6 +544,7 @@ def _gather_status() -> dict:
         "now": now.strftime("%Y-%m-%d %H:%M:%S"),
         "paused": pause.is_paused(),
         "paused_since": pause.paused_since(),
+        "paused_until": pause.resume_on(),  # YYYY-MM-DD, or None = until resumed
         "battery": battery,
         "signal": signal,
         "signal_note": signal_note,
@@ -872,6 +875,8 @@ PAGE = """<!DOCTYPE html>
     padding:8px 10px; border-radius:9px; background:rgba(10,1,24,.7);
     border:1px solid var(--line); color:#fff; font-family:var(--font); font-size:.78rem;
   }
+  .pausehint { font-size:.7rem; color:var(--dim); margin:0 0 16px; text-align:center; }
+  #pauseOverlay input[type=date] { color-scheme:dark; }
   .gearbtn.danger { border-color:var(--pink); color:#ff9ccb; box-shadow:0 0 10px rgba(255,46,136,.3); }
   .btn-danger { background:linear-gradient(180deg,#ff5ca0,#c41f73); border-color:var(--pink); box-shadow:var(--glow-pink); }
   .thumbgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(96px, 1fr)); gap:8px; margin:8px 0 4px; }
@@ -905,8 +910,6 @@ PAGE = """<!DOCTYPE html>
 
     <div class="banner" id="banner">…</div>
     <button id="toggle" disabled>…</button>
-    <button class="test" id="testCapture">📷 Test capture now</button>
-    <div id="testStatus" class="buildstat" style="margin:-10px 0 16px;"></div>
 
     <div class="grid">
       <div class="card"><div class="label">Battery</div><div class="value" id="battery">…</div></div>
@@ -981,6 +984,12 @@ PAGE = """<!DOCTYPE html>
       <div class="note">Change anything here. Most settings apply instantly; ones marked
         <span class="badge">restart</span> take effect next time the container restarts.
         Password fields are left blank — type a new one only to change it.</div>
+      <div class="group-title" style="margin-top:4px;">Camera test</div>
+      <button type="button" class="test" id="testCapture" style="margin-bottom:8px;">📷 Test capture now</button>
+      <div id="testStatus" class="buildstat"></div>
+      <div class="hint" style="font-size:.7rem; color:var(--dim); margin:4px 0 6px;">Wakes the camera and
+        takes one fresh snapshot right now, ignoring pause, capture days and the daylight window.
+        Uses a little battery.</div>
       <form id="settingsForm"><div id="formBody">Loading…</div>
         <div class="actions">
           <button type="button" class="btn-ghost" id="closeSettings">Cancel</button>
@@ -1009,6 +1018,28 @@ PAGE = """<!DOCTYPE html>
       <div class="actions">
         <button type="button" class="btn-ghost" id="closeCaptures">Close</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Pause options: rest of today / until a date / until resumed. -->
+  <div class="overlay" id="pauseOverlay" style="z-index:60;">
+    <div class="sheet" style="max-width:440px;">
+      <button type="button" class="sheet-x" id="pauseCloseX" aria-label="Close" title="Close">✕</button>
+      <h2>⏸ PAUSE CAPTURES</h2>
+      <div class="note">How long should photos stop? The camera stays logged in either way,
+        and a timed pause resumes by itself.</div>
+      <button type="button" class="pause" id="pauseToday" style="margin-bottom:6px;">Rest of today</button>
+      <div class="pausehint" id="pauseTodayHint"></div>
+      <button type="button" class="test" id="pauseDateBtn" style="margin-bottom:6px;">📅 Until a date…</button>
+      <div id="pauseDateRow" class="field" style="display:none;">
+        <label for="pauseDate">Start captures again on</label>
+        <input type="date" id="pauseDate">
+        <button type="button" class="pause" id="pauseDateGo" style="margin:10px 0 0;" disabled>Pick a date</button>
+      </div>
+      <div class="pausehint"></div>
+      <button type="button" class="btn-ghost" id="pauseForever" style="margin-bottom:6px;">Until I press Resume</button>
+      <div class="pausehint">Stays paused (even across restarts) until you resume it.</div>
+      <button type="button" class="btn-ghost" id="pauseCancel" style="margin:0;">Cancel</button>
     </div>
   </div>
 
@@ -1067,11 +1098,14 @@ async function refresh() {
 }
 
 function paint(s) {
+  lastStatus = s;
   const banner = document.getElementById('banner');
   const btn = document.getElementById('toggle');
   if (s.paused) {
     banner.className = 'banner paused';
-    banner.textContent = '⏸ Paused' + (s.paused_since ? ' · since ' + s.paused_since : '');
+    banner.textContent = s.paused_until
+      ? '⏸ Paused · resumes ' + fmtDay(s.paused_until)
+      : '⏸ Paused' + (s.paused_since ? ' · since ' + s.paused_since : '');
     btn.className = 'resume'; btn.textContent = '▶ Resume captures';
   } else {
     banner.className = 'banner running';
@@ -1125,15 +1159,84 @@ function paint(s) {
     'Errors today: ' + s.errors_today + ' · auto-refreshes every 30s';
 }
 
-// Pause / Resume.
+// Pause / Resume. Resume is one tap; Pause opens a dialog asking how long.
+let lastStatus = null;
+
+// "2026-11-24" -> "Tue, Nov 24" (parsed as a LOCAL date, not UTC midnight).
+function fmtDay(iso) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  if (!y || !m || !d) return String(iso);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined,
+    { weekday:'short', month:'short', day:'numeric' });
+}
+// The SERVER's today (status.now is in the camera's time zone), shifted by n days.
+function serverDay(n) {
+  const base = (lastStatus && lastStatus.now) ? lastStatus.now.slice(0, 10) : null;
+  const [y, m, d] = (base || new Date().toISOString().slice(0, 10)).split('-').map(Number);
+  const dt = new Date(y, m - 1, d + n);
+  return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0')
+       + '-' + String(dt.getDate()).padStart(2, '0');
+}
+
+const pauseOv = document.getElementById('pauseOverlay');
+const pauseDate = document.getElementById('pauseDate');
+const pauseDateGo = document.getElementById('pauseDateGo');
+
+function openPauseDialog() {
+  document.getElementById('pauseTodayHint').textContent =
+    'Resumes automatically tomorrow (' + fmtDay(serverDay(1)) + ').';
+  document.getElementById('pauseDateRow').style.display = 'none';
+  pauseDate.min = serverDay(1); pauseDate.max = serverDay(366); pauseDate.value = '';
+  pauseDateGo.disabled = true; pauseDateGo.textContent = 'Pick a date';
+  pauseOv.classList.add('open');
+}
+function closePauseDialog() { pauseOv.classList.remove('open'); }
+
+async function doPause(resumeOn) {
+  const btn = document.getElementById('toggle');
+  closePauseDialog();
+  busy = true; btn.disabled = true; btn.textContent = 'Working…';
+  try {
+    const r = await fetch('/api/pause', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(resumeOn ? { resume_on: resumeOn } : {})
+    });
+    const res = await r.json();
+    if (!r.ok) toast(res.error || 'Could not pause.', true);
+    else toast(res.paused_until ? 'Paused · resumes ' + fmtDay(res.paused_until) : 'Paused until you resume.');
+  } catch (err) { toast('Could not reach the daemon.', true); }
+  busy = false;
+  await refresh();
+}
+
 document.getElementById('toggle').addEventListener('click', async (e) => {
   const btn = e.currentTarget;
-  const action = btn.className === 'pause' ? 'pause' : 'resume';
+  if (btn.className === 'pause') { openPauseDialog(); return; }
   busy = true; btn.disabled = true; btn.textContent = 'Working…';
-  try { await fetch('/api/' + action, { method: 'POST' }); } catch (err) {}
+  try { await fetch('/api/resume', { method: 'POST' }); } catch (err) {}
   busy = false;
   await refresh();
 });
+
+document.getElementById('pauseToday').addEventListener('click', () => doPause('tomorrow'));
+document.getElementById('pauseForever').addEventListener('click', () => doPause(null));
+document.getElementById('pauseCancel').addEventListener('click', closePauseDialog);
+document.getElementById('pauseCloseX').addEventListener('click', closePauseDialog);
+pauseOv.addEventListener('click', (e) => { if (e.target === pauseOv) closePauseDialog(); });
+
+document.getElementById('pauseDateBtn').addEventListener('click', () => {
+  document.getElementById('pauseDateRow').style.display = '';
+  pauseDate.focus();
+  // Pop the calendar straight open where the browser supports it.
+  try { if (pauseDate.showPicker) pauseDate.showPicker(); } catch (err) {}
+});
+pauseDate.addEventListener('change', () => {
+  const v = pauseDate.value;
+  const ok = v && v >= pauseDate.min && v <= pauseDate.max;
+  pauseDateGo.disabled = !ok;
+  pauseDateGo.textContent = ok ? 'Pause until ' + fmtDay(v) : 'Pick a date';
+});
+pauseDateGo.addEventListener('click', () => { if (pauseDate.value) doPause(pauseDate.value); });
 
 // Test capture: force a snapshot now and report the result.
 document.getElementById('testCapture').addEventListener('click', async (e) => {
@@ -1652,6 +1755,30 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception:
             return None
 
+    def _handle_pause(self) -> None:
+        """Pause captures, optionally until a date: {"resume_on": "YYYY-MM-DD"|"tomorrow"}.
+        No body (or no resume_on) = paused until someone presses Resume."""
+        data = self._read_json() or {}
+        raw = str(data.get("resume_on") or "").strip().lower()
+        resume_date = None
+        if raw:
+            today = daylight.now().date()
+            if raw == "tomorrow":
+                resume_date = today + dt.timedelta(days=1)
+            else:
+                try:
+                    resume_date = dt.date.fromisoformat(raw)
+                except ValueError:
+                    resume_date = None
+                if resume_date is None or not (today < resume_date <= today + dt.timedelta(days=366)):
+                    self._send(400, json.dumps({"error": "Pick a resume date between tomorrow "
+                                                         "and one year from now."}).encode("utf-8"),
+                               "application/json")
+                    return
+        pause.pause(resume_date)
+        self._send(200, json.dumps({"paused": True, "paused_until": pause.resume_on()}).encode("utf-8"),
+                   "application/json")
+
     def _handle_save_settings(self) -> None:
         """Read a JSON body, validate + persist it via config, return the result."""
         try:
@@ -1800,8 +1927,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             path = self.path.split("?", 1)[0]
             if path == "/api/pause":
-                pause.pause()
-                self._send(200, b'{"paused": true}', "application/json")
+                self._handle_pause()
             elif path == "/api/resume":
                 pause.resume()
                 self._send(200, b'{"paused": false}', "application/json")

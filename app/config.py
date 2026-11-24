@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -57,7 +58,7 @@ log = logging.getLogger(__name__)
 #     key      - the variable name (also the environment-variable name)
 #     label    - friendly name shown in the UI
 #     group    - which section of the settings form it belongs to
-#     type     - "str" | "int" | "float" | "secret" | "time" | "choice" | "days"
+#     type     - "str" | "int" | "float" | "secret" | "time" | "choice" | "days" | "emails"
 #     default  - value used when neither the file nor the environment sets it
 #     help     - one-line explanation shown under the field
 #     secret   - True for passwords: never sent to the browser; blank = keep
@@ -137,8 +138,10 @@ SETTINGS_SCHEMA = [
             {"key": "DAILY_DIGEST_TIME", "label": "Daily digest time", "type": "str", "default": "sunset",
              "help": "\"sunset\" sends at sunset each day, or a fixed time like \"20:30\". "
                      "Ignored when the daily digest is turned off above."},
-            {"key": "ALERT_EMAIL", "label": "Send alerts to", "type": "str", "default": None,
-             "help": "Where alerts and the daily digest are emailed."},
+            {"key": "ALERT_EMAIL", "label": "Send alerts to", "type": "emails", "default": None,
+             "help": "Where alerts and the daily digest are emailed. Add more than one address "
+                     "by separating them with commas, e.g. \"me@example.com, boss@example.com\". "
+                     "Everyone on the list can see the other addresses."},
             {"key": "FROM_EMAIL", "label": "From address", "type": "str", "default": "",
              "help": "Optional \"From\" address. Blank = use the SMTP username."},
         ],
@@ -263,6 +266,13 @@ def _coerce(field: dict, raw):
             _parse_hhmm(value, field["key"])  # validate "HH:MM"
         return value
 
+    if t == "emails":
+        # One or more addresses separated by commas/semicolons -> "a@x.com, b@y.com".
+        try:
+            return ", ".join(parse_emails(raw))
+        except ValueError as exc:
+            raise ValueError(f"{field['key']}: {exc}")
+
     if t == "days":
         # Store a tidy canonical form ("mon - fri" -> "Mon-Fri") so the UI shows
         # it consistently and an equivalent re-entry isn't seen as a change.
@@ -307,6 +317,33 @@ def _parse_hhmm(text: str, key: str = "time") -> tuple[int, int]:
     if not (0 <= h <= 23 and 0 <= m <= 59):
         raise ValueError(f"{key} must be a valid 24-hour time (00:00–23:59)")
     return h, m
+
+
+_EMAIL_RX = re.compile(r"^[^@\s,;<>()\"]+@[^@\s,;<>()\"]+\.[^@\s,;<>()\"]+$")
+
+
+def parse_emails(text) -> list[str]:
+    """
+    Split a recipients setting into a clean list of addresses.
+
+    Accepts commas or semicolons (and stray spaces) between addresses; drops
+    blanks and case-insensitive duplicates, keeping the first spelling. Raises
+    ValueError naming the first entry that doesn't look like an email address.
+    Blank input -> [].
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in re.split(r"[,;]", str(text or "")):
+        addr = part.strip()
+        if not addr:
+            continue
+        if not _EMAIL_RX.match(addr):
+            raise ValueError(f"\"{addr}\" doesn't look like an email address "
+                             f"(separate several with commas)")
+        if addr.lower() not in seen:
+            seen.add(addr.lower())
+            out.append(addr)
+    return out
 
 
 _DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]  # Python weekday() order
@@ -406,7 +443,15 @@ def _compute() -> None:
             globals()[key] = _coerce(field, _resolve_raw(key))
         except ValueError:
             # A bad stored value should never crash startup; fall back to default.
-            globals()[key] = field.get("default")
+            # Exception: an email list keeps its raw text -- it is a REQUIRED
+            # setting, so falling back to the (empty) default would stop the
+            # daemon from starting, and the mail library may still cope.
+            raw = _resolve_raw(key)
+            if field["type"] == "emails" and raw:
+                log.warning("%s doesn't pass the address check; using it as-is.", key)
+                globals()[key] = str(raw).strip()
+            else:
+                globals()[key] = field.get("default")
 
     # FROM_EMAIL defaults to the SMTP username when left blank.
     if not globals().get("FROM_EMAIL"):
