@@ -228,6 +228,10 @@ SNAP_DIR = DATA_DIR / "snapshots"
 STATE_DIR = DATA_DIR / "state"
 LOG_DIR = DATA_DIR / "logs"
 OUTPUT_DIR = DATA_DIR / "output"
+# "Deleted" photos are MOVED here (same day sub-folders), never erased, so they
+# can be recovered from the NAS. Deliberately OUTSIDE snapshots/ so the gallery,
+# photo counts and the video builder all ignore it. Empty it by hand when done.
+TRASH_DIR = DATA_DIR / "trash"
 
 STATUS_CSV = LOG_DIR / "status.csv"
 APP_LOG = LOG_DIR / "app.log"

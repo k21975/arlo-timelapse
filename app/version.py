@@ -12,10 +12,20 @@ numbers are approximate. Adjust freely.
 
 from __future__ import annotations
 
-VERSION = "2.25.0"
+VERSION = "2.26.0"
 
 # Newest first. Each entry: version, date (YYYY-MM-DD), and a list of changes.
 CHANGELOG = [
+    {
+        "version": "2.26.0",
+        "date": "2026-11-23",
+        "changes": [
+            "New full-screen photo viewer: photos open over the page at the largest size the screen allows (true full-screen where the browser supports it) instead of in a new tab, and re-fit when you rotate the device.",
+            "Browse with the ‹ › buttons, by swiping left/right, or with the arrow keys; \"next\" moves forward in time. Close with ✕, Esc, or a swipe down.",
+            "Rows in \"Recent captures\" that have a photo are now tappable and open that photo in the viewer.",
+            "Deleting photos (single, selected, before a date, or all) no longer erases them: they are moved to a trash folder on the NAS (trash/<day>/) and can be recovered by moving them back into snapshots/. The trash is never emptied automatically.",
+        ],
+    },
     {
         "version": "2.25.0",
         "date": "2026-11-23",

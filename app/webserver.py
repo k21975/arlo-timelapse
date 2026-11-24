@@ -32,6 +32,7 @@ import html
 import json
 import logging
 import re
+import shutil
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
@@ -396,6 +397,22 @@ def _capture_path(rel: str):
     return config.SNAP_DIR / m.group(1) / m.group(2)
 
 
+def _status_row_rel(filename: str) -> str | None:
+    """status.csv stores the full saved path (/data/snapshots/DAY/arlo_....jpg).
+    Return it as "DAY/arlo_....jpg" if that photo still exists, else None (a
+    failed capture has no file; a photo may have been deleted since)."""
+    try:
+        name = (filename or "").replace("\\", "/").rstrip("/")
+        parts = name.split("/")
+        if len(parts) < 2:
+            return None
+        rel = parts[-2] + "/" + parts[-1]
+        img = _capture_path(rel)
+        return rel if img is not None and img.exists() else None
+    except Exception:
+        return None
+
+
 def _prune_empty_day_dirs() -> None:
     """Remove day folders that deletion has emptied out."""
     try:
@@ -406,24 +423,43 @@ def _prune_empty_day_dirs() -> None:
         pass
 
 
+def _move_to_trash(path) -> None:
+    """Move one saved frame into /data/trash/<day>/ (recoverable from the NAS).
+
+    Same volume, so this is a fast rename. If a file of that name is already in
+    the trash (deleted, put back, deleted again) the new one gets a numbered
+    suffix -- nothing in the trash is ever overwritten. Raises on failure, and
+    on failure the original is left where it was.
+    """
+    dest_dir = config.TRASH_DIR / path.parent.name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / path.name
+    n = 1
+    while dest.exists():
+        dest = dest_dir / f"{path.stem}__{n}{path.suffix}"
+        n += 1
+    shutil.move(str(path), str(dest))
+
+
 def _delete_captures(rels: list) -> int:
-    """Delete the listed frames (already-gone files are skipped, not errors)."""
+    """'Delete' the listed frames by moving them to the trash folder
+    (already-gone files are skipped, not errors)."""
     deleted = 0
     for rel in rels:
         path = _capture_path(str(rel))
         try:
             if path is not None and path.exists():
-                path.unlink()
+                _move_to_trash(path)
                 deleted += 1
         except Exception as exc:
-            log.warning("Could not delete capture %s: %s", rel, exc)
+            log.warning("Could not move capture %s to trash: %s", rel, exc)
     _prune_empty_day_dirs()
     return deleted
 
 
 def _clear_captures(before: str | None) -> int:
-    """Delete every frame, or only those in day folders before `before`
-    (frames from the `before` date itself are KEPT). Returns the count."""
+    """Move every frame to the trash, or only those in day folders before
+    `before` (frames from the `before` date itself are KEPT). Returns the count."""
     deleted = 0
     try:
         if config.SNAP_DIR.exists():
@@ -432,10 +468,10 @@ def _clear_captures(before: str | None) -> int:
                     continue  # day-folder names are YYYY-MM-DD, so this compares dates
                 for f in d.glob("arlo_*.jpg"):
                     try:
-                        f.unlink()
+                        _move_to_trash(f)
                         deleted += 1
                     except Exception as exc:
-                        log.warning("Could not delete capture %s: %s", f, exc)
+                        log.warning("Could not move capture %s to trash: %s", f, exc)
         _prune_empty_day_dirs()
         # Clearing everything also drops the latest.jpg convenience copy.
         if before is None:
@@ -500,6 +536,7 @@ def _gather_status() -> dict:
                     "battery": row.get("battery_pct", ""),
                     "signal": row.get("signal", ""),
                     "note": row.get("note", ""),
+                    "rel": _status_row_rel(row.get("filename", "")),
                 })
             if recent:
                 last_capture = recent[-1]
@@ -875,6 +912,28 @@ PAGE = """<!DOCTYPE html>
     padding:8px 10px; border-radius:9px; background:rgba(10,1,24,.7);
     border:1px solid var(--line); color:#fff; font-family:var(--font); font-size:.78rem;
   }
+  /* Recent-captures rows that have a photo are tappable. */
+  tr.haspic { cursor:pointer; }
+  tr.haspic:hover td { background:rgba(31,229,255,.07); }
+  tr.haspic td:first-child { color:var(--cyan); text-decoration:underline dotted; text-underline-offset:3px; }
+
+  /* ---- Full-screen photo viewer ---- */
+  #viewer { position:fixed; inset:0; z-index:65; background:#000; display:none;
+            align-items:center; justify-content:center; touch-action:none;
+            -webkit-user-select:none; user-select:none; }
+  #viewer.open { display:flex; }
+  #viewerImg { width:100%; height:100%; object-fit:contain; display:block; }
+  #viewer .vbtn { position:absolute; margin:0; padding:0; width:52px; height:52px; border-radius:50%;
+                  font-size:1.6rem; line-height:1; letter-spacing:0; color:#fff;
+                  background:rgba(10,1,24,.55); border:1px solid rgba(234,228,255,.35); box-shadow:none; }
+  #viewer .vbtn:hover:not(:disabled) { border-color:var(--cyan); box-shadow:var(--glow-cyan); }
+  #viewer .vbtn:disabled { opacity:.18; cursor:default; }
+  #viewer .vprev { left:12px; top:50%; transform:translateY(-50%); }
+  #viewer .vnext { right:12px; top:50%; transform:translateY(-50%); }
+  #viewer .vclose { top:12px; right:12px; width:44px; height:44px; font-size:1rem; }
+  #viewer .vcap { position:absolute; left:50%; bottom:14px; transform:translateX(-50%);
+                  background:rgba(10,1,24,.65); color:var(--ink); padding:6px 14px; border-radius:20px;
+                  font-size:.74rem; letter-spacing:.08em; white-space:nowrap; pointer-events:none; }
   .pausehint { font-size:.7rem; color:var(--dim); margin:0 0 16px; text-align:center; }
   #pauseOverlay input[type=date] { color-scheme:dark; }
   .gearbtn.danger { border-color:var(--pink); color:#ff9ccb; box-shadow:0 0 10px rgba(255,46,136,.3); }
@@ -1021,6 +1080,15 @@ PAGE = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- Full-screen photo viewer (gallery + recent-captures rows). -->
+  <div id="viewer" role="dialog" aria-label="Photo viewer">
+    <img id="viewerImg" alt="capture">
+    <div class="vcap" id="viewerCap"></div>
+    <button type="button" class="vbtn vprev" id="viewerPrev" aria-label="Previous photo">‹</button>
+    <button type="button" class="vbtn vnext" id="viewerNext" aria-label="Next photo">›</button>
+    <button type="button" class="vbtn vclose" id="viewerClose" aria-label="Close">✕</button>
+  </div>
+
   <!-- Pause options: rest of today / until a date / until resumed. -->
   <div class="overlay" id="pauseOverlay" style="z-index:60;">
     <div class="sheet" style="max-width:440px;">
@@ -1144,7 +1212,8 @@ function paint(s) {
   tb.innerHTML = '';
   (s.recent || []).forEach(row => {
     const ok = row.success === 'yes';
-    tb.innerHTML += '<tr><td>' + esc(row.timestamp) + '</td>'
+    tb.innerHTML += (row.rel ? '<tr class="haspic" data-rel="' + esc(row.rel) + '" title="View this photo">' : '<tr>')
+      + '<td>' + esc(row.timestamp) + '</td>'
       + '<td class="' + (ok ? 'ok' : 'fail') + '">' + (ok ? '✓' : '✕') + '</td>'
       + '<td>' + esc(row.battery) + '</td>'
       + '<td>' + esc(row.signal) + '</td>'
@@ -1488,7 +1557,7 @@ function renderCaptures(){
   const total = capDays.reduce((n, d) => n + d.frames.length, 0);
   document.getElementById('capCount').textContent = total
     ? total + ' photo' + (total === 1 ? '' : 's') + ' across ' + capDays.length
-      + ' day' + (capDays.length === 1 ? '' : 's') + '. Tap a photo to view it full-size.'
+      + ' day' + (capDays.length === 1 ? '' : 's') + '. Tap a photo to view it full-screen; swipe or use ‹ › to browse.'
     : 'No captures yet.';
   body.innerHTML = capDays.map(d =>
     '<div class="group-title">' + esc(d.date) + ' · ' + d.frames.length + '</div>'
@@ -1544,7 +1613,7 @@ document.getElementById('capBody').addEventListener('click', async (e) => {
   const rel = thumb.dataset.rel;
   if (e.target.closest('.x')) {
     const ans = await askModal('Delete this photo?',
-      rel + ' will be deleted permanently. This cannot be undone.', [
+      rel + ' will be moved to the trash folder on the NAS, where it can be recovered.', [
       {label:'Delete', cls:'btn-danger', value:'yes'},
       {label:'Cancel', cls:'btn-ghost',  value:'no'},
     ]);
@@ -1556,8 +1625,110 @@ document.getElementById('capBody').addEventListener('click', async (e) => {
     thumb.classList.toggle('sel', capSel.has(rel));
     capUpdateBar();
   } else {
-    window.open('/snapshots/' + rel, '_blank');
+    viewerOpen(chronoFrames(capDays), rel);
   }
+});
+
+// ---- Full-screen photo viewer ------------------------------------------------
+// Opens over everything at the largest size the screen allows (true full-screen
+// where the browser permits it), re-fits itself on rotation (pure CSS), and
+// steps through photos with ‹ › buttons, swipes, or the arrow keys.
+const viewerEl = document.getElementById('viewer');
+const viewerImg = document.getElementById('viewerImg');
+let vList = [], vIdx = 0, vWentFullscreen = false;
+
+// /api/captures lists days + frames newest-first; the viewer walks OLDEST ->
+// NEWEST so "next" moves forward in time, like the time-lapse itself.
+function chronoFrames(days) {
+  const out = [];
+  days.forEach(d => d.frames.forEach(f => out.push(d.date + '/' + f)));
+  return out.reverse();
+}
+
+// "2026-11-23/arlo_20261123_143000.jpg" -> "Mon, Nov 23 · 14:30"
+function frameLabel(rel) {
+  const [day, f] = rel.split('/');
+  return fmtDay(day) + ' · ' + f.slice(14, 16) + ':' + f.slice(16, 18);
+}
+
+function viewerShow() {
+  const rel = vList[vIdx];
+  viewerImg.src = '/snapshots/' + rel;
+  document.getElementById('viewerCap').textContent =
+    frameLabel(rel) + '  ·  ' + (vIdx + 1) + ' / ' + vList.length;
+  document.getElementById('viewerPrev').disabled = vIdx <= 0;
+  document.getElementById('viewerNext').disabled = vIdx >= vList.length - 1;
+  // Warm the cache for the neighbours so swiping feels instant.
+  [vIdx - 1, vIdx + 1].forEach(j => { if (j >= 0 && j < vList.length) (new Image()).src = '/snapshots/' + vList[j]; });
+}
+
+function viewerOpen(list, rel) {
+  vList = list.length ? list : [rel];
+  vIdx = Math.max(0, vList.indexOf(rel));
+  if (vList[vIdx] !== rel) { vList = [rel]; vIdx = 0; }
+  viewerShow();
+  viewerEl.classList.add('open');
+  vWentFullscreen = false;
+  try {
+    const req = viewerEl.requestFullscreen || viewerEl.webkitRequestFullscreen;
+    if (req && !document.fullscreenElement) {
+      const p = req.call(viewerEl);
+      vWentFullscreen = true;
+      if (p && p.catch) p.catch(() => { vWentFullscreen = false; });
+    }
+  } catch (err) { vWentFullscreen = false; }
+}
+
+function viewerClose() {
+  viewerEl.classList.remove('open');
+  viewerImg.removeAttribute('src');
+  try {
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    if (vWentFullscreen && fsEl) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  } catch (err) {}
+  vWentFullscreen = false;
+}
+
+function viewerStep(d) {
+  const j = vIdx + d;
+  if (j < 0 || j >= vList.length) return;
+  vIdx = j; viewerShow();
+}
+
+document.getElementById('viewerPrev').addEventListener('click', () => viewerStep(-1));
+document.getElementById('viewerNext').addEventListener('click', () => viewerStep(1));
+document.getElementById('viewerClose').addEventListener('click', viewerClose);
+document.addEventListener('keydown', (e) => {
+  if (!viewerEl.classList.contains('open')) return;
+  if (e.key === 'ArrowLeft') { viewerStep(-1); e.preventDefault(); }
+  else if (e.key === 'ArrowRight') { viewerStep(1); e.preventDefault(); }
+  else if (e.key === 'Escape') { viewerClose(); }
+});
+// Swipe left/right = next/previous; swipe down = close.
+let vTouch = null;
+viewerEl.addEventListener('touchstart', (e) => {
+  vTouch = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+}, { passive: true });
+viewerEl.addEventListener('touchend', (e) => {
+  if (!vTouch || !e.changedTouches.length) return;
+  const dx = e.changedTouches[0].clientX - vTouch.x, dy = e.changedTouches[0].clientY - vTouch.y;
+  vTouch = null;
+  if (Math.abs(dx) > 40 && Math.abs(dx) > 1.5 * Math.abs(dy)) viewerStep(dx < 0 ? 1 : -1);
+  else if (dy > 80 && dy > 1.5 * Math.abs(dx)) viewerClose();
+});
+
+// Recent-captures rows that have a photo open it in the viewer, with every
+// capture available to swipe through.
+document.getElementById('recent').addEventListener('click', async (e) => {
+  const tr = e.target.closest('tr.haspic');
+  if (!tr) return;
+  const rel = tr.dataset.rel;
+  let list = [];
+  try {
+    const r = await fetch('/api/captures', { cache:'no-store' });
+    list = chronoFrames((await r.json()).days || []);
+  } catch (err) {}
+  viewerOpen(list, rel);
 });
 
 async function capDelete(files){
@@ -1567,7 +1738,7 @@ async function capDelete(files){
       body: JSON.stringify({files}),
     });
     const res = await r.json();
-    toast(r.ok ? 'Deleted ' + res.deleted + ' photo' + (res.deleted === 1 ? '' : 's') + '.'
+    toast(r.ok ? 'Moved ' + res.deleted + ' photo' + (res.deleted === 1 ? '' : 's') + ' to trash.'
                : (res.error || 'Delete failed.'), !r.ok);
   } catch (e) { toast('Could not reach the daemon.', true); }
   await loadCaptures();
@@ -1578,7 +1749,7 @@ document.getElementById('capDeleteSel').addEventListener('click', async () => {
   if (!capSel.size) { toast('No photos selected yet — tap photos to select them.', true); return; }
   const n = capSel.size;
   const ans = await askModal('Delete ' + n + ' selected photo' + (n === 1 ? '' : 's') + '?',
-    'They will be deleted permanently. This cannot be undone.', [
+    'They will be moved to the trash folder on the NAS, where they can be recovered.', [
     {label:'Delete', cls:'btn-danger', value:'yes'},
     {label:'Cancel', cls:'btn-ghost',  value:'no'},
   ]);
@@ -1592,7 +1763,7 @@ async function capClear(before){
       body: JSON.stringify(before ? {before} : {all: true}),
     });
     const res = await r.json();
-    toast(r.ok ? 'Deleted ' + res.deleted + ' photo' + (res.deleted === 1 ? '' : 's') + '.'
+    toast(r.ok ? 'Moved ' + res.deleted + ' photo' + (res.deleted === 1 ? '' : 's') + ' to trash.'
                : (res.error || 'Clear failed.'), !r.ok);
   } catch (e) { toast('Could not reach the daemon.', true); }
   capSel.clear();
@@ -1604,7 +1775,7 @@ document.getElementById('capClearAll').addEventListener('click', async () => {
   const total = capDays.reduce((n, d) => n + d.frames.length, 0);
   if (!total) { toast('There are no captures to delete.', true); return; }
   const ans = await askModal('Delete ALL captures?',
-    'All ' + total + ' photos will be deleted permanently and the time-lapse starts over from nothing. This cannot be undone.', [
+    'All ' + total + ' photos will be moved to the trash folder on the NAS and the time-lapse starts over from nothing. They can be recovered from the trash.', [
     {label:'Delete everything', cls:'btn-danger', value:'yes'},
     {label:'Cancel',            cls:'btn-ghost',  value:'no'},
   ]);
@@ -1615,8 +1786,8 @@ document.getElementById('capClearBefore').addEventListener('click', async () => 
   const d = document.getElementById('capBeforeDate').value;
   if (!d) { toast('Pick a date first (photos BEFORE it will be deleted).', true); return; }
   const ans = await askModal('Delete captures before ' + d + '?',
-    'Every photo taken before ' + d + ' will be deleted permanently (photos from ' + d
-    + ' itself onward are kept). This cannot be undone.', [
+    'Every photo taken before ' + d + ' will be moved to the trash folder on the NAS (photos from ' + d
+    + ' itself onward are kept). They can be recovered from the trash.', [
     {label:'Delete', cls:'btn-danger', value:'yes'},
     {label:'Cancel', cls:'btn-ghost',  value:'no'},
   ]);
@@ -1954,7 +2125,7 @@ class _Handler(BaseHTTPRequestHandler):
                                "application/json")
                     return
                 n = _delete_captures(files)
-                log.info("Deleted %d capture(s) via dashboard.", n)
+                log.info("Moved %d capture(s) to trash via dashboard.", n)
                 self._send(200, json.dumps({"deleted": n}).encode("utf-8"),
                            "application/json")
             elif path == "/api/captures/clear":
@@ -1970,7 +2141,7 @@ class _Handler(BaseHTTPRequestHandler):
                                "application/json")
                     return
                 n = _clear_captures(str(before) if before else None)
-                log.info("Cleared %d capture(s) via dashboard (%s).",
+                log.info("Moved %d capture(s) to trash via dashboard (%s).",
                          n, f"before {before}" if before else "ALL")
                 self._send(200, json.dumps({"deleted": n}).encode("utf-8"),
                            "application/json")

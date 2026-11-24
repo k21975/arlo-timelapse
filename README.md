@@ -495,8 +495,14 @@ of impact:
    ├─ state/                            # saved Arlo session (skips repeat 2FA)
    │  ├─ paused.flag                    # present only while captures are paused
    │  └─ settings.json                  # settings changed from the dashboard UI
-   └─ output/                           # compiled videos
+   ├─ output/                           # compiled videos
+   └─ trash/YYYY-MM-DD/arlo_*.jpg       # photos "deleted" from the dashboard
 ```
+
+Deleting photos from the dashboard's Captures window never erases them: they are
+moved to `trash/` (same day folders) and can be recovered by moving them back into
+`snapshots/<day>/`. The trash is never emptied automatically — clear it out by hand
+on the NAS when the project is done.
 
 ---
 
